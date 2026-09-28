@@ -1,0 +1,64 @@
+name: Build Remote Linux amd64
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_ui:
+        description: "Embed the graph UI in the binary"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: Build static binary
+        env:
+          WITH_UI: ${{ inputs.with_ui }}
+        run: |
+          if [ "$WITH_UI" = "true" ]; then
+            scripts/build.sh --with-ui CC=gcc CXX=g++ STATIC=1
+          else
+            scripts/build.sh CC=gcc CXX=g++ STATIC=1
+          fi
+
+      - name: Verify Linux portability
+        run: |
+          file build/c/codebase-memory-mcp
+          ldd_output="$(ldd build/c/codebase-memory-mcp 2>&1 || true)"
+          printf '%s\n' "$ldd_output"
+          printf '%s\n' "$ldd_output" | grep -Eq 'not a dynamic executable|statically linked'
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist/package
+          cp LICENSE install.sh build/c/
+          scripts/gen-third-party-notices.sh build/c/THIRD_PARTY_NOTICES.md
+          tar -czf dist/package/codebase-memory-mcp-pro-linux-amd64-portable.tar.gz \
+            -C build/c codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md
+          sha256sum dist/package/codebase-memory-mcp-pro-linux-amd64-portable.tar.gz \
+            > dist/package/checksums.txt
+          file build/c/codebase-memory-mcp
+          ./build/c/codebase-memory-mcp --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codebase-memory-mcp-pro-linux-amd64
+          path: dist/package
